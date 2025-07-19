@@ -1,6 +1,12 @@
+import os
+from dotenv import load_dotenv
 from openai import OpenAI
 
-client = OpenAI(api_key="7d6f9aa8a6b640fb68d97f80cc6014dd0ab1670f5c8a214181ab5252c6e47274", base_url="https://api.together.xyz/v1")
+load_dotenv()  # Load environment variables from .env
+
+api_key = os.getenv("TOGETHER_API_KEY")
+
+client = OpenAI(api_key=api_key, base_url="https://api.together.xyz/v1")
 
 def ask_mistral(prompt):
     response = client.chat.completions.create(
