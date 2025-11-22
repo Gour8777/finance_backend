@@ -1,122 +1,168 @@
-import os
-import requests
-import numpy as np
+import os, json, requests, numpy as np
 from functools import lru_cache
 from typing import List, Dict
 
 class IntentEngine:
-    def __init__(self):
-        # ----- your original samples (unchanged) -----
+    def __init__(self, emb_path: str = "utils/intent_embs.json"):
+        # same intent map (for reference / future edits)
         self.intent_map: Dict[str, List[str]] = {
-            "greeting": ["hi", "hello", "hey","hii","good morning", "good evening", "good night"],
-            "acknowledgment": ["ok", "okay", "thanks", "thank you"],
-            "budget_query": ["what's my budget", "budget status","how much can i spend", "budget left"],
-            "expense_query": ["expenses", "how much did i spend"],
-            "expense_analysis": ["where did i spend most", "top spending category", "spending analysis", "expense breakdown", "spending habits"],
-            "investment_query": ["investments", "portfolio", "sip", "mutual fund","suggest me some good stocks","where to invest"],
-            "savings_advice": ["how to save", "reduce spending", "save more", "cut costs", "save money", "savings tips", "financial advice"],
-            "followup": ["tell me more", "and what about"," can you explain", "more details", "can you elaborate", "what else"],
-        }
-        self.threshold: float = 0.6  # keep same threshold
+    "greeting": [
+        "hi", "hello", "hey", "hii", "yo", "good morning", 
+        "good evening", "good night", "hey there", "hola"
+    ],
 
-        # ----- env config (Cloudflare Workers AI defaults) -----
+    "acknowledgment": [
+        "ok", "okay", "thanks", "thank you", "got it", 
+        "sounds good", "great", "cool", "understood"
+    ],
+
+    "budget_query": [
+        "what's my budget", "budget status", "how much can i spend",
+        "budget left", "remaining budget", "tell me my budget",
+        "current budget", "month budget", "budget details"
+    ],
+
+    "set_budget": [
+        "set my budget", "i want to set a budget", 
+        "update budget", "change my budget", 
+        "set monthly budget", "create a budget"
+    ],
+
+    "expense_query": [
+        "expenses", "how much did i spend", "show my spending",
+        "my last transactions", "recent expenses", 
+        "how much did i pay", "transaction history"
+    ],
+
+    "add_expense": [
+        "add an expense", "record a spending", "note this expense",
+        "log an expense", "i spent money", "save this expense"
+    ],
+
+    "expense_analysis": [
+        "where did i spend most", "top spending category", 
+        "spending analysis", "expense breakdown", 
+        "spending habits", "biggest expense", 
+        "category-wise spending", "monthly spending analysis"
+    ],
+
+    "investment_query": [
+        "investments", "portfolio", "sip", "mutual fund",
+        "suggest me some good stocks", "where to invest",
+        "investment ideas", "best investment options",
+        "stock suggestions", "investment plan"
+    ],
+
+    "investment_performance": [
+        "investment returns", "portfolio performance",
+        "how are my investments doing", "profit and loss in investments",
+        "investment growth"
+    ],
+
+    "savings_advice": [
+        "how to save", "reduce spending", "save more",
+        "cut costs", "save money", "savings tips",
+        "financial advice", "ways to save", 
+        "how can i save money"
+    ],
+
+    "credit_card_query": [
+        "recommended credit card", "best credit card",
+        "which credit card should i get", "show me credit card options",
+        "credit card suggestion", "card recommendation"
+    ],
+
+    "credit_card_benefits": [
+        "card benefits", "what are the rewards", "reward points",
+        "cashback details", "card features"
+    ],
+
+    "bill_query": [
+        "upcoming bills", "pending bills", "show my bills",
+        "when is my bill due", "bill reminders", "due payments"
+    ],
+
+    "followup": [
+        "tell me more", "and what about", "can you explain",
+        "more details", "can you elaborate", "what else", 
+        "continue", "go on"
+    ],
+
+    "goodbye": [
+        "bye", "goodbye", "see you", "talk to you later",
+        "bye bye", "catch you later"
+    ],
+
+    "unknown": [
+        "nonsense", "??", "what are you saying",
+        "i don't know", "random", "confusing"
+    ]
+}
+        self.threshold: float = 0.6
+
+        # --- Cloudflare env config ---
         self.account_id = os.environ.get("CF_ACCOUNT_ID", "")
-        default_base = f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/ai/run" if self.account_id else ""
+        default_base = (
+            f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/ai/run"
+            if self.account_id else ""
+        )
         self.base_url = os.environ.get("EMBED_BASE_URL", default_base)
         self.model = os.environ.get("EMBED_MODEL", "@cf/baai/bge-m3")
-        self.api_key = os.environ.get("CF_API_TOKEN")  # required
+        self.api_key = os.environ.get("CF_API_TOKEN")
 
         if not self.api_key:
             raise RuntimeError("CF_API_TOKEN is not set")
         if not self.base_url:
             raise RuntimeError("EMBED_BASE_URL is not set (or CF_ACCOUNT_ID missing)")
 
-        # ----- precompute exemplar embeddings (batched per intent) -----
+        # --- load precomputed exemplar embeddings ---
+        if not os.path.exists(emb_path):
+            raise RuntimeError(
+                f"{emb_path} not found. Run precompute_intents.py locally and commit the file."
+            )
+
+        with open(emb_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+
+        # convert to numpy arrays
         self.intent_embs: Dict[str, List[np.ndarray]] = {
-            intent: self._embed_batch(samples) for intent, samples in self.intent_map.items()
+            intent: [np.asarray(v, dtype=np.float32) for v in vec_list]
+            for intent, vec_list in raw.items()
         }
 
     # ---------------------------
-    # Embedding via API (Cloudflare / OpenAI-style fallback)
+    # Embedding via CF (ONLY for user text now)
     # ---------------------------
     def _embed_batch(self, texts: list[str]) -> list[np.ndarray]:
         if not texts:
             return []
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
         resp = requests.post(
             f"{self.base_url}/{self.model}",
-            json={"text": texts},      # Workers AI expects {"text": [...]}
-            headers=headers,
+            json={"text": texts},
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
             timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
 
-    # ---- Handle multiple possible shapes ----
-        vectors = None
-
-    # 1) Workers AI common shape: {"result":{"data":[{"embedding":[...]}, ...]}}
+        # Workers AI common shape
         try:
             arr = data["result"]["data"]
-            vectors = [
+            return [
                 np.asarray(item["embedding"] if isinstance(item, dict) else item, dtype=np.float32)
                 for item in arr
             ]
-        except (KeyError, TypeError):
-            pass
-
-    # 2) OpenAI-style: {"data":[{"embedding":[...]}, ...]}
-        if vectors is None:
-            try:
-                arr = data["data"]
-                vectors = [
-                    np.asarray(item["embedding"] if isinstance(item, dict) else item, dtype=np.float32)
-                    for item in arr
-                ]
-            except (KeyError, TypeError):
-                pass
-
-    # 3) Raw list of vectors: {"result":{"data":[[...],[...]]}} or {"result":[[...],[...]]}
-        if vectors is None:
-            try:
-                arr = data["result"]["data"]
-                if isinstance(arr, list) and arr and isinstance(arr[0], list):
-                    vectors = [np.asarray(vec, dtype=np.float32) for vec in arr]
-            except (KeyError, TypeError):
-                pass
-
-        if vectors is None:
-            try:
-                arr = data["result"]
-                if isinstance(arr, list) and arr and isinstance(arr[0], list):
-                    vectors = [np.asarray(vec, dtype=np.float32) for vec in arr]
-            except (KeyError, TypeError):
-                pass
-
-    # 4) Last fallback: if top-level is a list of vectors already
-        if vectors is None and isinstance(data, list) and data and isinstance(data[0], list):
-            vectors = [np.asarray(vec, dtype=np.float32) for vec in data]
-
-        if vectors is None:
-        # helpful debug if shape changes again
+        except Exception:
             raise ValueError(f"Unexpected embeddings response shape: {data}")
-
-        return vectors
-
-        
 
     @lru_cache(maxsize=512)
     def _embed_text(self, text: str) -> np.ndarray:
-        # cached single-text embedding
         return self._embed_batch([text])[0]
 
-    # ---------------------------
-    # Cosine similarity
-    # ---------------------------
     @staticmethod
     def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
         na, nb = np.linalg.norm(a), np.linalg.norm(b)
@@ -124,9 +170,6 @@ class IntentEngine:
             return 0.0
         return float(np.dot(a, b) / (na * nb))
 
-    # ---------------------------
-    # Main detection logic (unchanged)
-    # ---------------------------
     def detect_intent(self, user_input: str) -> str:
         input_emb = self._embed_text(user_input)
         best_score = -1.0
@@ -142,5 +185,6 @@ class IntentEngine:
 
         if best_score < self.threshold:
             matched_intent = "unknown"
+
         print(matched_intent)
         return matched_intent

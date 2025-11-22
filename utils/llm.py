@@ -1,18 +1,17 @@
 import os
-from dotenv import load_dotenv
 from openai import OpenAI
+from dotenv import load_dotenv
+load_dotenv()
+client = OpenAI(
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1"
+)
 
-load_dotenv()  # Load environment variables from .env
-
-api_key = os.getenv("TOGETHER_API_KEY")
-
-client = OpenAI(api_key=api_key, base_url="https://api.together.xyz/v1")
-
-def ask_mistral(prompt):
+def ask_llm(prompt):
     response = client.chat.completions.create(
-        model="mistralai/Mistral-7B-Instruct-v0.1",
+        model="llama-3.3-70b-versatile",
         messages=[
-            {"role": "system", "content": "You are a helpful financial assistant."},
+            {"role": "system", "content": "You are a helpful finance assistant."},
             {"role": "user", "content": prompt}
         ]
     )
