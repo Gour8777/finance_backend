@@ -70,14 +70,15 @@ async def chatbot(request: ChatbotRequest, authorization: str = Header(None)):
             intent = last_intent
     if intent == "unknown":
         bot_response = (
-            "I'm your personal financial adviser 🤝\n"
-            "You can ask me things like:\n"
-            "• 'Show my last 15 days expenses'\n"
-            "• 'What is my budget left?'\n"
-            "• 'Where did I spend most this month?'\n"
-            "• 'Suggest some investments based on my risk level'\n"
+        "I'm your personal financial adviser 🤝\\n"
+        "You can ask me things like:\\n"
+        "• Show my last 15 days expenses\\n"
+        "• What is my budget left?\\n"
+        "• Where did I spend most this month?\\n"
+        "• Suggest some investments based on my risk level\\n"
             "Try asking in one of these ways."
-        )
+    )
+
         context_engine.set_user_context(uid, "last_intent", intent)
         context_engine.set_user_context(uid, "last_bot_response", bot_response)
 
