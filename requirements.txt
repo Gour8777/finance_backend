@@ -10,3 +10,4 @@ openai
 dateparser
 rapidfuzz
 python-dotenv
+numpy
